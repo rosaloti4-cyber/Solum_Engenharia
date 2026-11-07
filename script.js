@@ -1,8 +1,11 @@
-// Dados simulados para cada talude da Fazenda Boa Vista
+// Importa a conexão configurada do Firebase (ajuste o caminho se necessário)
+import { database, ref, onValue } from "./firebase-config.js";
+
+// Dados simulados para os taludes da Fazenda Boa Vista (Taludes 2, 3 e 4 continuam simulados)
 const taludesData = {
   talude1: {
     nome: "Talude 01 (Norte)",
-    sensor: "Sensor LoRa-01",
+    sensor: "Sensor ESP32-LoRa",
     status: "NORMAL",
     statusClass: "green",
     icon: "check",
@@ -55,16 +58,21 @@ const taludesData = {
 };
 
 let chartInstance = null;
+let taludeAtualSelecionado = "talude1"; // Controla qual talude está ativo na tela
 
 document.addEventListener("DOMContentLoaded", function () {
   lucide.createIcons();
   initChart();
   
-  // Evento ao mudar o seletor de Taludes
+  // 1. Ouve o Firebase em tempo real para o Talude 01 (Enviado pelo ESP32)
+  iniciarEscutaFirebase();
+
+  // 2. Evento ao mudar o seletor de Taludes no Dashboard
   const selector = document.getElementById("talude-selector");
   if (selector) {
     selector.addEventListener("change", function (e) {
-      updateDashboard(e.target.value);
+      taludeAtualSelecionado = e.target.value;
+      updateDashboard(taludeAtualSelecionado);
     });
   }
 });
@@ -74,7 +82,7 @@ function initChart() {
   chartInstance = new Chart(ctx, {
     type: "line",
     data: {
-      labels: ["08:00", "10:00", "12:00", "14:00", "16:00", "18:00", "20:00"],
+      labels: ["08:00", "10:00", "12:00", "14:00", "16:00", "18:00", "Atual (ESP32)"],
       datasets: [
         {
           label: "Umidade (%)",
@@ -104,6 +112,57 @@ function initChart() {
       },
       scales: {
         y: { min: 0, max: 100, ticks: { callback: v => v + "%" } }
+      }
+    }
+  });
+}
+
+// ============================================================================
+// CONEXÃO COM O FIREBASE (DADOS REAIS DO ESP32)
+// ============================================================================
+function iniciarEscutaFirebase() {
+  const taludeRef = ref(database, 'taludes/talude1');
+
+  onValue(taludeRef, (snapshot) => {
+    const dadosFirebase = snapshot.val();
+
+    if (dadosFirebase) {
+      // Atualiza dinamicamente os valores do Talude 01 com os dados vindos do ESP32
+      taludesData.talude1.umidade = dadosFirebase.umidade.toFixed(1) + "%";
+      taludesData.talude1.saturacao = dadosFirebase.saturacao.toFixed(1) + "%";
+      taludesData.talude1.status = dadosFirebase.status; // "NORMAL", "ATENCAO", "ALERTA"
+
+      // Define classes e ícones visuais com base no status enviado pelo ESP32
+      if (dadosFirebase.status === "NORMAL") {
+        taludesData.talude1.statusClass = "green";
+        taludesData.talude1.icon = "check";
+        taludesData.talude1.headline = "Condições dentro da faixa de referência (Tempo Real).";
+        taludesData.talude1.subtext = `Sensor ADC: ${dadosFirebase.adc} | Estabilidade mantida.`;
+      } else if (dadosFirebase.status === "ATENCAO") {
+        taludesData.talude1.statusClass = "yellow";
+        taludesData.talude1.icon = "alert-triangle";
+        taludesData.talude1.headline = "Elevação no teor de umidade do solo detectada em campo!";
+        taludesData.talude1.subtext = `Sensor ADC: ${dadosFirebase.adc} | Monitoramento intensificado.`;
+      } else {
+        taludesData.talude1.statusClass = "red";
+        taludesData.talude1.icon = "alert-octagon";
+        taludesData.talude1.headline = "Risco elevado de instabilidade crítico!";
+        taludesData.talude1.subtext = `Sensor ADC: ${dadosFirebase.adc} | Saturação > 90% atingida.`;
+      }
+
+      // Adiciona o novo ponto de umidade e saturação no array do gráfico em tempo real
+      const arrayU = taludesData.talude1.chartUmidade;
+      const arrayS = taludesData.talude1.chartSaturacao;
+      
+      arrayU.shift(); // Remove o primeiro elemento antigo
+      arrayU.push(parseFloat(dadosFirebase.umidade.toFixed(1))); // Adiciona o novo valor real
+
+      arrayS.shift();
+      arrayS.push(parseFloat(dadosFirebase.saturacao.toFixed(1)));
+
+      // Se o utilizador estiver a visualizar o talude1 no momento, atualiza a tela instantaneamente
+      if (taludeAtualSelecionado === "talude1") {
+        updateDashboard("talude1");
       }
     }
   });
