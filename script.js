@@ -1,7 +1,7 @@
-// Importa a conexão configurada do Firebase (ajuste o caminho se necessário)
+// Importa a conexão configurada do Firebase
 import { database, ref, onValue } from "./firebase-config.js";
 
-// Dados simulados para os taludes da Fazenda Boa Vista (Taludes 2, 3 e 4 continuam simulados)
+// Dados para os taludes da Fazenda Boa Vista (Talude 1 recebe os dados reais do ESP32)
 const taludesData = {
   talude1: {
     nome: "Talude 01 (Norte)",
@@ -58,16 +58,20 @@ const taludesData = {
 };
 
 let chartInstance = null;
-let taludeAtualSelecionado = "talude1"; // Controla qual talude está ativo na tela
+let taludeAtualSelecionado = "talude1";
 
 document.addEventListener("DOMContentLoaded", function () {
-  lucide.createIcons();
+  if (typeof lucide !== 'undefined') {
+    lucide.createIcons();
+  }
+  
+  // Inicializa o gráfico com segurança
   initChart();
   
-  // 1. Ouve o Firebase em tempo real para o Talude 01 (Enviado pelo ESP32)
+  // Ouve os dados reais do ESP32 no Firebase
   iniciarEscutaFirebase();
-
-  // 2. Evento ao mudar o seletor de Taludes no Dashboard
+  
+  // Evento do seletor de taludes
   const selector = document.getElementById("talude-selector");
   if (selector) {
     selector.addEventListener("change", function (e) {
@@ -78,7 +82,10 @@ document.addEventListener("DOMContentLoaded", function () {
 });
 
 function initChart() {
-  const ctx = document.getElementById("medicoesChart").getContext("2d");
+  const canvasElement = document.getElementById("medicoesChart");
+  if (!canvasElement) return;
+  
+  const ctx = canvasElement.getContext("2d");
   chartInstance = new Chart(ctx, {
     type: "line",
     data: {
@@ -117,9 +124,6 @@ function initChart() {
   });
 }
 
-// ============================================================================
-// CONEXÃO COM O FIREBASE (DADOS REAIS DO ESP32)
-// ============================================================================
 function iniciarEscutaFirebase() {
   const taludeRef = ref(database, 'taludes/talude1');
 
@@ -127,12 +131,10 @@ function iniciarEscutaFirebase() {
     const dadosFirebase = snapshot.val();
 
     if (dadosFirebase) {
-      // Atualiza dinamicamente os valores do Talude 01 com os dados vindos do ESP32
-      taludesData.talude1.umidade = dadosFirebase.umidade.toFixed(1) + "%";
-      taludesData.talude1.saturacao = dadosFirebase.saturacao.toFixed(1) + "%";
-      taludesData.talude1.status = dadosFirebase.status; // "NORMAL", "ATENCAO", "ALERTA"
+      taludesData.talude1.umidade = (dadosFirebase.umidade || 0).toFixed(1) + "%";
+      taludesData.talude1.saturacao = (dadosFirebase.saturacao || 0).toFixed(1) + "%";
+      taludesData.talude1.status = dadosFirebase.status || "NORMAL";
 
-      // Define classes e ícones visuais com base no status enviado pelo ESP32
       if (dadosFirebase.status === "NORMAL") {
         taludesData.talude1.statusClass = "green";
         taludesData.talude1.icon = "check";
@@ -150,17 +152,17 @@ function iniciarEscutaFirebase() {
         taludesData.talude1.subtext = `Sensor ADC: ${dadosFirebase.adc} | Saturação > 90% atingida.`;
       }
 
-      // Adiciona o novo ponto de umidade e saturação no array do gráfico em tempo real
       const arrayU = taludesData.talude1.chartUmidade;
       const arrayS = taludesData.talude1.chartSaturacao;
       
-      arrayU.shift(); // Remove o primeiro elemento antigo
-      arrayU.push(parseFloat(dadosFirebase.umidade.toFixed(1))); // Adiciona o novo valor real
+      if (arrayU && arrayS) {
+        arrayU.shift();
+        arrayU.push(parseFloat((dadosFirebase.umidade || 0).toFixed(1)));
 
-      arrayS.shift();
-      arrayS.push(parseFloat(dadosFirebase.saturacao.toFixed(1)));
+        arrayS.shift();
+        arrayS.push(parseFloat((dadosFirebase.saturacao || 0).toFixed(1)));
+      }
 
-      // Se o utilizador estiver a visualizar o talude1 no momento, atualiza a tela instantaneamente
       if (taludeAtualSelecionado === "talude1") {
         updateDashboard("talude1");
       }
@@ -170,43 +172,57 @@ function iniciarEscutaFirebase() {
 
 function updateDashboard(taludeKey) {
   const data = taludesData[taludeKey];
+  if (!data) return;
 
-  // 1. Atualiza Banner de Status
   const titleEl = document.getElementById("status-title");
-  titleEl.innerText = data.status;
-  titleEl.className = `status-title ${data.statusClass}`;
+  if (titleEl) {
+    titleEl.innerText = data.status;
+    titleEl.className = `status-title ${data.statusClass}`;
+  }
 
   const iconBox = document.getElementById("banner-icon");
-  iconBox.className = `status-icon ${data.statusClass}`;
+  if (iconBox) iconBox.className = `status-icon ${data.statusClass}`;
   
-  // Troca ícone no banner
   const lucideIcon = document.getElementById("banner-lucide-icon");
-  lucideIcon.setAttribute("data-lucide", data.icon);
+  if (lucideIcon) lucideIcon.setAttribute("data-lucide", data.icon);
 
-  document.getElementById("status-headline").innerText = data.headline;
-  document.getElementById("status-subtext").innerText = data.subtext;
+  const headlineEl = document.getElementById("status-headline");
+  if (headlineEl) headlineEl.innerText = data.headline;
 
-  // 2. Atualiza Cards de Valores
-  document.getElementById("val-umidade").innerText = data.umidade;
-  document.getElementById("val-saturacao").innerText = data.saturacao;
+  const subtextEl = document.getElementById("status-subtext");
+  if (subtextEl) subtextEl.innerText = data.subtext;
+
+  const valUmidade = document.getElementById("val-umidade");
+  if (valUmidade) valUmidade.innerText = data.umidade;
+
+  const valSaturacao = document.getElementById("val-saturacao");
+  if (valSaturacao) valSaturacao.innerText = data.saturacao;
 
   const badgeU = document.getElementById("badge-umidade");
-  badgeU.innerText = data.status === "NORMAL" ? "Normal" : data.status;
-  badgeU.className = `badge-status ${data.statusClass}`;
+  if (badgeU) {
+    badgeU.innerText = data.status === "NORMAL" ? "Normal" : data.status;
+    badgeU.className = `badge-status ${data.statusClass}`;
+  }
 
   const badgeS = document.getElementById("badge-saturacao");
-  badgeS.innerText = data.status === "NORMAL" ? "Normal" : data.status;
-  badgeS.className = `badge-status ${data.statusClass}`;
+  if (badgeS) {
+    badgeS.innerText = data.status === "NORMAL" ? "Normal" : data.status;
+    badgeS.className = `badge-status ${data.statusClass}`;
+  }
 
-  // 3. Atualiza Informações Laterais
-  document.getElementById("sensor-id").innerText = data.sensor;
-  document.getElementById("chart-talude-name").innerText = data.nome;
+  const sensorId = document.getElementById("sensor-id");
+  if (sensorId) sensorId.innerText = data.sensor;
 
-  // 4. Atualiza Gráfico
-  chartInstance.data.datasets[0].data = data.chartUmidade;
-  chartInstance.data.datasets[1].data = data.chartSaturacao;
-  chartInstance.update();
+  const chartName = document.getElementById("chart-talude-name");
+  if (chartName) chartName.innerText = data.nome;
 
-  // Recria os ícones Lucide atualizados
-  lucide.createIcons();
+  if (chartInstance && chartInstance.data) {
+    chartInstance.data.datasets[0].data = data.chartUmidade;
+    chartInstance.data.datasets[1].data = data.chartSaturacao;
+    chartInstance.update();
+  }
+
+  if (typeof lucide !== 'undefined') {
+    lucide.createIcons();
+  }
 }
